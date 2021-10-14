@@ -1,0 +1,113 @@
+version: "3" # version du vocabulaire utilisé
+
+networks:
+  sonarnet:
+#    driver: bridge
+  ci-net: # nom du réseau
+#    driver: bridge # liaison entre les VM
+    ipam:
+      config:
+        - subnet: 10.90.0.0/16 # ip du réseau
+
+services: # liste des machines virtuelles
+  gitlab: # nom de la config (en réalité)
+    image: gitlab/gitlab-ce:13.1.4-ce.0 # choix de la "machinevirtuelle" (sur https://hub.docker.com)
+    container_name: gitlab # nom de la machine virtuelle
+    restart: unless-stopped # redémarre s'il s'arrête, sauf si c'est une demande explicite
+    hostname: "gitlab"
+    networks: # réseau de machines virtuelles
+      ci-net: # nom du réseau 
+        ipv4_address: 10.90.0.6 #ip de Gitlab sur le réseau
+    environment: # les variables d'environnement, évite de modifier directement la configuration
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab:9000' # il faut regarder la doc pour les connaîtres
+        gitlab_rails['gitlab_shell_ssh_port'] = 22
+    ports: # port de l'hote qui est relié au port de la machine virtuelle
+      - "8080:80" # port HTTP
+      - "9022:22" # port ssh
+      - "443:443"
+      - "9000:9000"
+    volumes: # points montages persistant car les conteneurs perdent les données quand on les referme
+      - gitlab_config:/etc/gitlab
+      - gitlab_logs:/var/log/gitlab
+      - gitlab_data:/var/opt/gitlab
+
+  runner1: 
+    image: gitlab/gitlab-runner:latest
+    container_name: runner1
+    restart: unless-stopped # redémarre s'il s'arrête, sauf si c'est une demande explicite
+    depends_on: 
+      - gitlab
+    networks: # réseau de machines virtuelles
+      ci-net: # nom du réseau
+        ipv4_address: 10.90.0.45 #ip sur le réseau
+    volumes: 
+      - /var/run/docker.sock:/var/run/docker.sock 
+      - ./config/runner1/:/etc/gitlab-runner
+  runner2: 
+    image: gitlab/gitlab-runner:latest
+    container_name: runner2
+    restart: unless-stopped # redémarre s'il s'arrête, sauf si c'est une demande explicite
+    depends_on: 
+      - gitlab
+    networks: # réseau de machines virtuelles
+      ci-net: # nom du réseau
+        ipv4_address: 10.90.0.46 #ip sur le réseau
+    volumes: 
+      - "//var/run/docker.sock:/var/run/docker.sock:ro"
+      - ./config/runner2/:/etc/gitlab-runner
+  
+  # selenium:
+  #   image: selenium/standalone-chrome-debug
+  #   container_name: selenium
+  #   restart: unless-stopped
+  #   ports:
+  #     - 4444:4444
+  #     - 5900:5900
+  #   volumes:
+  #     - /dev/shm:/dev/shm
+
+  db-sonar:
+    image: postgres
+    container_name: sonar_db
+    restart: unless-stopped # redémarre s'il s'arrête, sauf si c'est une demande explicite
+    networks:
+      - sonarnet
+    environment:
+      - POSTGRES_USER=sonar
+      - POSTGRES_PASSWORD=sonar
+    volumes:
+      - sonar_postgresql:/var/lib/postgresql
+      # mapping doit être explicite, voir : https://github.com/docker-library/postgres/blob/4e48e3228a30763913ece952c611e5e9b95c8759/Dockerfile.template#L52
+      - sonar_postgresql_data:/var/lib/postgresql/data
+
+  sonar:
+    image: sonarqube:7.5-community
+    container_name: sonar
+    restart: unless-stopped # redémarre s'il s'arrête, sauf si c'est une demande explicite
+    depends_on: # on s'assure que la config db-sonar est chargé avant sonar
+      - db-sonar
+    ports:
+      - 7000:9000
+    networks:
+      sonarnet: {}
+      ci-net:
+        ipv4_address: 10.90.0.7
+    environment:
+      - sonar.jdbc.url=jdbc:postgresql://db-sonar:5432/sonar
+    volumes:
+      - sonarqube_conf:/opt/sonarqube/conf
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+
+
+
+volumes: # volumes gérés par docker
+  sonarqube_conf:
+  sonarqube_data:
+  sonarqube_extensions:
+  sonar_postgresql:
+  sonar_postgresql_data:
+  gitlab_config:
+  gitlab_logs:
+  gitlab_data:
